@@ -29,7 +29,8 @@ import { User } from "@/lib/types";
 import { usePathname } from "next/navigation";
 import { SettingsContext } from "../settings/SettingsProvider";
 import { useContext } from "react";
-import { CustomTooltip } from "../tooltip/CustomTooltip";
+import { Cloud } from "@phosphor-icons/react";
+import { CLOUD_ENABLED } from "@/lib/constants";
 
 export function ClientLayout({
   user,
@@ -378,6 +379,22 @@ export function ClientLayout({
                                   </div>
                                 ),
                                 link: "/admin/whitelabeling",
+                              },
+                            ]
+                          : []),
+                        ...(CLOUD_ENABLED
+                          ? [
+                              {
+                                name: (
+                                  <div className="flex">
+                                    <Cloud
+                                      className="text-icon-settings-sidebar"
+                                      size={18}
+                                    />
+                                    <div className="ml-1">Cloud Settings</div>
+                                  </div>
+                                ),
+                                link: "/admin/cloud-settings",
                               },
                             ]
                           : []),
