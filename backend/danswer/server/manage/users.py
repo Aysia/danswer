@@ -32,6 +32,7 @@ from danswer.auth.users import current_admin_user
 from danswer.auth.users import current_curator_or_admin_user
 from danswer.auth.users import current_user
 from danswer.auth.users import optional_user
+from danswer.auth.users import register_tenant_users
 from danswer.configs.app_configs import AUTH_TYPE
 from danswer.configs.app_configs import MULTI_TENANT
 from danswer.configs.app_configs import SESSION_EXPIRE_TIME_SECONDS
@@ -42,6 +43,7 @@ from danswer.configs.app_configs import SMTP_USER
 from danswer.configs.app_configs import VALID_EMAIL_DOMAINS
 from danswer.configs.app_configs import WEB_DOMAIN
 from danswer.configs.constants import AuthType
+from danswer.db.auth import get_total_users
 from danswer.db.engine import current_tenant_id
 from danswer.db.engine import get_session
 from danswer.db.models import AccessToken
@@ -205,13 +207,16 @@ The Danswer Team"""
 def bulk_invite_users(
     emails: list[str] = Body(..., embed=True),
     current_user: User | None = Depends(current_admin_user),
+    db_session: Session = Depends(get_session),
 ) -> int:
     """emails are string validated. If any email fails validation, no emails are
     invited and an exception is raised."""
+
     if current_user is None:
         raise HTTPException(
             status_code=400, detail="Auth is disabled, cannot invite users"
         )
+
     tenant_id = current_tenant_id.get()
 
     normalized_emails = []
@@ -234,21 +239,43 @@ def bulk_invite_users(
     if MULTI_TENANT:
         for email in all_emails:
             send_user_email_invite(email, current_user)
-    return write_invited_users(all_emails)
+
+    invited_users = write_invited_users(all_emails)
+    if not MULTI_TENANT:
+        return invited_users
+    try:
+        register_tenant_users(current_tenant_id.get(), get_total_users(db_session))
+        return invited_users
+
+    except HTTPException:
+        remove_users_from_tenant(normalized_emails, tenant_id)
+        write_invited_users(get_invited_users())  # Reset to original state
+        raise
 
 
 @router.patch("/manage/admin/remove-invited-user")
 def remove_invited_user(
     user_email: UserByEmail,
     _: User | None = Depends(current_admin_user),
+    db_session: Session = Depends(get_session),
 ) -> int:
     user_emails = get_invited_users()
     remaining_users = [user for user in user_emails if user != user_email.user_email]
 
     tenant_id = current_tenant_id.get()
     remove_users_from_tenant([user_email.user_email], tenant_id)
+    remaining_users = write_invited_users(remaining_users)
+    try:
+        if MULTI_TENANT:
+            register_tenant_users(current_tenant_id.get(), get_total_users(db_session))
+    except Exception:
+        logger.error(
+            "Request to update number of seats taken in control plane failed. "
+            "This may cause synchronization issues/out of date enforcement of seat limits."
+        )
+        raise
 
-    return write_invited_users(remaining_users)
+    return remaining_users
 
 
 @router.patch("/manage/admin/deactivate-user")
